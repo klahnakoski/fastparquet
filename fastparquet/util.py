@@ -208,11 +208,13 @@ def infer_dtype(column):
     except AttributeError:
         return pd.lib.infer_dtype(column)
 
+
 def groupby_types(iterable):
     groups = defaultdict(list)
     for x in iterable:
         groups[type(x)].append(x)
     return groups
+
 
 def get_column_metadata(column, name):
     """Produce pandas column metadata block"""

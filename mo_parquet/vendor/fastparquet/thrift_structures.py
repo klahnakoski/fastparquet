@@ -2,13 +2,10 @@ import io
 import sys
 import types
 
-from mo_future import text_type
 from thrift.protocol.TCompactProtocol import TCompactProtocolAccelerated as TCompactProtocol
 from thrift.protocol.TProtocol import TProtocolException
 
-from mo_logs import Log
-from .parquet_thrift.parquet import ttypes as parquet_thrift
-from .util import ParquetException
+from fastparquet.parquet_thrift.parquet import ttypes as parquet_thrift
 
 
 def read_thrift(file_obj, ttype):
@@ -55,8 +52,21 @@ def write_thrift(fobj, thrift):
         thrift.write(pout)
         fail = False
     except TProtocolException as e:
-        Log.error(text_type('Thrift parameter validation failure'), cause=e)
-
+        typ, val, tb = sys.exc_info()
+        frames = []
+        while tb is not None:
+            frames.append(tb)
+            tb = tb.tb_next
+        frame = [tb for tb in frames if 'write_struct' in str(tb.tb_frame.f_code)]
+        variables = frame[0].tb_frame.f_locals
+        obj = variables['obj']
+        name = variables['fname']
+        fail = True
+    if fail:
+        raise ParquetException('Thrift parameter validation failure %s'
+                               ' when writing: %s-> Field: %s' % (
+            val.args[0], obj, name
+        ))
     return fobj.tell() - t0
 
 

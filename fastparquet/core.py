@@ -138,8 +138,8 @@ def read_data_page(f, helper, header, metadata, skip_nulls=False,
             values = np.zeros(nval, dtype=np.int8)
     else:
         raise NotImplementedError('Encoding %s' % daph.encoding)
-    return definition_levels, repetition_levels, values[:nval]
 
+    return definition_levels, repetition_levels, values[:nval]
 
 def skip_definition_bytes(io_obj, num):
     io_obj.loc += 6
@@ -259,7 +259,7 @@ def read_col(column, schema_helper, infile, use_cat=False,
             null = not schema_helper.is_required(cmd.path_in_schema[0])
             null_val = (se.repetition_type !=
                         parquet_thrift.FieldRepetitionType.REQUIRED)
-            row_idx = 1 + encoding._assemble_objects(assign, defi, rep, val, dic, d,
+            row_idx = 1 + encoding._assemble_objects(schema_helper._path_to_schema_element(column.meta_data.path_in_schema), assign, defi, rep, val, dic, d,
                                              null, null_val, max_defi, row_idx)
         elif defi is not None:
             max_defi = schema_helper.max_definition_level(cmd.path_in_schema)

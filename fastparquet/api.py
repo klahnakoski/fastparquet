@@ -13,6 +13,8 @@ import warnings
 
 import numpy as np
 from fastparquet.util import join_path
+from mo_dots import listwrap
+from mo_parquet import SchemaTree
 
 from .core import read_thrift
 from .thrift_structures import parquet_thrift
@@ -151,7 +153,7 @@ class ParquetFile(object):
         for i, rg in enumerate(self.row_groups):
             for chunk in rg.columns:
                 self.group_files.setdefault(i, set()).add(chunk.file_path)
-        self.schema = schema.SchemaHelper(self._schema)
+        self.schema = SchemaTree.new_instance(self._schema)
         self.selfmade = self.created_by.split(' ', 1)[0] == "fastparquet-python"
         files = [rg.columns[0].file_path
                  for rg in self.row_groups
@@ -167,10 +169,12 @@ class ParquetFile(object):
     @property
     def columns(self):
         """ Column names """
-        return [c for c, i in self._schema[0].children.items()
-                if len(getattr(i, 'children', [])) == 0
-                or i.converted_type in [parquet_thrift.ConvertedType.LIST,
-                                        parquet_thrift.ConvertedType.MAP]]
+        return [
+            i.name
+            for i in self.schema.get_parquet_metadata()
+            if not i.num_children
+            or i.converted_type in [parquet_thrift.ConvertedType.LIST, parquet_thrift.ConvertedType.MAP]
+        ]
 
     @property
     def statistics(self):
@@ -447,7 +451,7 @@ class ParquetFile(object):
             md = json.loads(self.key_value_metadata['pandas'])['columns']
             tz = {c['name']: c['metadata']['timezone'] for c in md
                   if (c.get('metadata', {}) or {}).get('timezone', None)}
-        return _pre_allocate(size, columns, categories, index, self.cats,
+        return _pre_allocate(self, size, columns, categories, index, self.cats,
                              self._dtypes(categories), tz)
 
     @property
@@ -492,10 +496,15 @@ class ParquetFile(object):
 
     def _dtypes(self, categories=None):
         """ Implied types of the columns in the schema """
+
         categories = self.check_categories(categories)
-        dtype = OrderedDict((name, (converted_types.typemap(f)
-                            if f.num_children in [None, 0] else np.dtype("O")))
-                            for name, f in self.schema.root.children.items())
+        dtype = OrderedDict(
+            (
+                f.name,
+                converted_types.typemap(f) if not f.num_children else np.dtype("O")
+            )
+            for f in self.schema.get_parquet_metadata()
+        )
         for i, (col, dt) in enumerate(dtype.copy().items()):
             if dt.kind in ['i', 'b']:
                 # int/bool columns that may have nulls become float columns
@@ -519,7 +528,7 @@ class ParquetFile(object):
                     else:
                         dtype[col] = np.dtype('f8')
             elif dt == 'S12':
-                dtype[col] = 'M8[ns]'
+                dtype[col] = np.dtype('M8[ns]')
         for field in categories:
             dtype[field] = 'category'
         for cat in self.cats:
@@ -533,7 +542,7 @@ class ParquetFile(object):
     __repr__ = __str__
 
 
-def _pre_allocate(size, columns, categories, index, cs, dt, tz=None):
+def _pre_allocate(self, size, columns, categories, index, cs, dt, tz=None):
     index = [index] if isinstance(index, str) else (index or [])
     cols = [c for c in columns if c not in index]
     categories = categories or {}
@@ -544,7 +553,15 @@ def _pre_allocate(size, columns, categories, index, cs, dt, tz=None):
     def get_type(name):
         if name in categories:
             return 'category'
-        return dt.get(name, None)
+        desired_type = dt.get(name, None)
+        if not desired_type:
+            return None
+        elif self.schema.max_repetition_level(name) > 0:
+            return np.dtype("O")
+        elif desired_type.kind in ['u', 'i', 'b'] and sum(listwrap(self.statistics['null_count'][name])) > 0:
+            return np.dtype("O")
+        else:
+            return desired_type
 
     dtypes = [get_type(c) for c in cols]
     index_types = [get_type(i) for i in index]
